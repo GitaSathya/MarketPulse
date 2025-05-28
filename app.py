@@ -147,7 +147,7 @@ run = st.button("Generate Insight")
 # Response
 if run and user_prompt:
     # Compose context
-    news_context = "\n".join(news)
+    news_context = "\n".join([item.get("title", "") + ": " + item.get("summary", "") for item in news_list])
     llm_input = f"""
 User question: {user_prompt}
 
@@ -157,10 +157,10 @@ Recent News:
 
 Answer the user with a concise financial insight.
 """
-    response = llm(llm_input, max_tokens=300)
+    response = llm(llm_input, max_tokens=1000)
     output = response["choices"][0]["text"]
     st.success("LLM Insight")
-    st.write(output)
+    st.text(output)
 # Display summary of news
 
 # Show price trend plot
