@@ -6,6 +6,7 @@ import datetime
 import matplotlib.pyplot as plt
 from io import BytesIO
 import plotly.express as px
+from streamlit.components.v1 import html
 
 # -------- Model Configuration --------
 
@@ -37,6 +38,25 @@ def fetch_crypto_price(coin="bitcoin"):
     params = {"ids": coin_id, "vs_currencies": "usd"}
     response = requests.get(url, params=params)
     return response.json().get(coin_id, {}).get("usd", "N/A")
+
+# ------- Fetch Crypto Price Change -------
+def fetch_crypto_price_change(coin="bitcoin"):
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        "vs_currency": "usd",
+        "ids": coin.lower()
+    }
+    response = requests.get(url, params=params)
+    data = response.json()
+    if data:
+        item = data[0]
+        return {
+            "price": item.get("current_price", "N/A"),
+            "change": item.get("price_change_24h", 0.0),
+            "percent_change": item.get("price_change_percentage_24h", 0.0)
+        }
+    return {"price": "N/A", "change": 0.0, "percent_change": 0.0}
+
 
 # ------- Fetch Crypto News -------
 def fetch_crypto_news(coin="bitcoin"):
@@ -96,7 +116,7 @@ def plot_price_trend(coin="bitcoin", days=7):
 # -------- Streamlit UI --------
 st.set_page_config(page_title="Crypto LLM Assistant", layout="wide")
 
-st.title("💹 Crypto LLM Chat Assistant")
+st.title("💹 Market Pulse - Crypto LLM Chat Assistant")
 st.write("Get real-time cryptocurrency updates and insights powered by LLM.")
 
 # Select coin
@@ -105,6 +125,38 @@ coin = st.selectbox("Choose a cryptocurrency:", ["bitcoin", "ethereum", "dogecoi
 # Show live price
 price = fetch_crypto_price(coin)
 st.metric(label=f"Current Price of {coin.capitalize()}", value=f"${price}")
+
+# --- Enhanced Price Change Widget ---
+price_data = fetch_crypto_price_change(coin)
+current_price = price_data["price"]
+change = price_data["change"]
+percent_change = price_data["percent_change"]
+currency = "USD"
+timestamp = datetime.datetime.utcnow().strftime("%b %d, %H:%M UTC")
+
+# Styling logic
+color = "#ff4b4b" if change < 0 else "#4CAF50"
+arrow = "↓" if change < 0 else "↑"
+
+# HTML Widget
+summary_html = f"""
+<div style="background-color:#111; padding: 25px; border-radius: 12px; color: white; width: 100%; font-family: 'Arial', sans-serif;">
+    <div style="font-size: 16px; color: #ccc;">Market Summary &gt; <span style="font-weight: bold; color: white;">{coin.capitalize()}</span></div>
+    <div style="font-size: 36px; font-weight: bold; margin-top: 5px;">{current_price:,.2f} <span style="font-size: 20px;">{currency}</span></div>
+    <div style="color: {color}; font-size: 16px; margin-top: 5px;">
+        {arrow} {abs(change):,.2f} ({percent_change:.2f}%) today
+    </div>
+    <div style="font-size: 12px; color: #aaa; margin-top: 10px;">{timestamp}</div>
+</div>
+"""
+col1, col2, col3 = st.columns([1, 2, 1])  # left, center, right
+
+with col2:
+    html(summary_html, height=160)
+
+# --- End of Enhanced Price Change Widget ---
+
+
 
 # Show news
 
@@ -163,9 +215,24 @@ Answer the user with a concise financial insight.
     st.text(output)
 # Display summary of news
 
+# Select time range
+time_range_label = "Choose time range for trend:"
+time_range_options = {
+    "7 Days": 7,
+    "1 Month": 30,
+    "3 Months": 90,
+    "6 Months": 180,
+    "1 Year": 365,
+    "5 Years": 1825,
+    "Max": "max"
+}
+time_range_display = st.selectbox(time_range_label, list(time_range_options.keys()))
+selected_days = time_range_options[time_range_display]
+
+
 # Show price trend plot
-st.subheader("📊 7-Day Price Trend")
-fig = plot_price_trend(coin)
+st.subheader(f"📊 {time_range_display} Price Trend")
+fig = plot_price_trend(coin, days=selected_days)
 st.plotly_chart(fig, use_container_width=True)
 
 # Footer
