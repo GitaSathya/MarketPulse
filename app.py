@@ -3,23 +3,21 @@ import pandas as pd
 import requests
 from llama_cpp import Llama
 import datetime
-import matplotlib.pyplot as plt
-from io import BytesIO
 import plotly.express as px
 from streamlit.components.v1 import html
+from crypto_core import fetch_crypto_news
 
 # -------- Model Configuration --------
 
-
 # ------- Symbol Mapping -------
-COIN_TICKERS = {
-    "bitcoin": "BTC",
-    "ethereum": "ETH",
-    "dogecoin": "DOGE",
-    "solana": "SOL",
-    "cardano": "ADA",
-    "ripple": "XRP",
-    "litecoin": "LTC"
+COIN_SYMBOLS = {
+    "bitcoin": "BTCUSDT",
+    "ethereum": "ETHUSDT",
+    "dogecoin": "DOGEUSDT",
+    "solana": "SOLUSDT",
+    "cardano": "ADAUSDT",
+    "ripple": "XRPUSDT",
+    "litecoin": "LTCUSDT"
 }
 
 # ------- LLM Setup (adjust path as needed) -------
@@ -31,77 +29,52 @@ llm = Llama(
     verbose=False
 )
 
-# ------- Fetch Crypto Price -------
-def fetch_crypto_price(coin="bitcoin"):
-    coin_id = coin.lower()
-    url = "https://api.coingecko.com/api/v3/simple/price"
-    params = {"ids": coin_id, "vs_currencies": "usd"}
+# ------- Fetch Crypto Price (Binance) -------
+def fetch_binance_price(symbol="BTCUSDT"):
+    url = "https://api.binance.com/api/v3/ticker/price"
+    params = {"symbol": symbol}
     response = requests.get(url, params=params)
-    return response.json().get(coin_id, {}).get("usd", "N/A")
+    return float(response.json().get("price", 0))
 
-# ------- Fetch Crypto Price Change -------
-def fetch_crypto_price_change(coin="bitcoin"):
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {
-        "vs_currency": "usd",
-        "ids": coin.lower()
-    }
+# ------- Fetch 24h Price Change (Binance) -------
+def fetch_binance_price_change(symbol="BTCUSDT"):
+    url = "https://api.binance.com/api/v3/ticker/24hr"
+    params = {"symbol": symbol}
     response = requests.get(url, params=params)
     data = response.json()
-    if data:
-        item = data[0]
-        return {
-            "price": item.get("current_price", "N/A"),
-            "change": item.get("price_change_24h", 0.0),
-            "percent_change": item.get("price_change_percentage_24h", 0.0)
-        }
-    return {"price": "N/A", "change": 0.0, "percent_change": 0.0}
+    return {
+        "price": float(data.get("lastPrice", 0)),
+        "change": float(data.get("priceChange", 0)),
+        "percent_change": float(data.get("priceChangePercent", 0))
+    }
 
-
-# ------- Fetch Crypto News -------
-def fetch_crypto_news(coin="bitcoin"):
-    try:
-        ticker = COIN_TICKERS.get(coin.lower(), "BTC")
-        url = "https://cryptopanic.com/api/v1/posts/"
-        params = {
-            "auth_token": "c6629503d252f8dd082c35de7bba474ec0cd0874",  # Use environment variable in real setup
-            "currencies": ticker,
-            "kind": "news"
-        }
-        response = requests.get(url, params=params)
-        data = response.json()
-        return data.get("results", [])
-    except Exception as e:
-        return [{"title": "Error fetching news", "summary": str(e)}]
-
-# ------- Generate Summary Using LLM -------
-def generate_summary(news_data):
-    text_block = " ".join([item.get("title", "") + ": " + item.get("summary", "") for item in news_data])
-    prompt = f"Summarize the following crypto news in a few sentences:\n{text_block}"
-    output = llm(prompt=prompt, max_tokens=200)
-    return output["choices"][0]["text"].strip()
-
-# ------- Plot Price Trend -------
-
-def plot_price_trend(coin="bitcoin", days=7):
-    coin_id = coin.lower()
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
-    params = {"vs_currency": "usd", "days": days}
+# ------- Fetch Historical Price Trend (Binance) -------
+def fetch_binance_price_trend(symbol="BTCUSDT", days=7):
+    url = "https://api.binance.com/api/v3/klines"
+    interval = "1d"
+    limit = days if isinstance(days, int) else 1000  # Binance max is 1000
+    params = {"symbol": symbol, "interval": interval, "limit": limit}
     response = requests.get(url, params=params)
-    prices = response.json().get("prices", [])
+    klines = response.json()
+    df = pd.DataFrame(klines, columns=[
+        "open_time", "open", "high", "low", "close", "volume",
+        "close_time", "quote_asset_volume", "number_of_trades",
+        "taker_buy_base_asset_volume", "taker_buy_quote_asset_volume", "ignore"
+    ])
+    df["date"] = pd.to_datetime(df["open_time"], unit="ms")
+    df["price"] = df["close"].astype(float)
+    return df[["date", "price"]]
 
-    df = pd.DataFrame(prices, columns=["timestamp", "price"])
-    df["date"] = pd.to_datetime(df["timestamp"], unit="ms")
-
+def plot_price_trend_binance(symbol, days=7):
+    df = fetch_binance_price_trend(symbol, days)
     fig = px.line(
         df,
         x="date",
         y="price",
-        title=f"{coin.title()} Price Trend - Last {days} Days",
+        title=f"{symbol.replace('USDT','')} Price Trend - Last {days} Days",
         labels={"price": "Price (USD)", "date": "Date"},
         template="plotly_dark"
     )
-
     fig.update_traces(line=dict(color="cyan", width=2))
     fig.update_layout(
         title_font_size=20,
@@ -109,9 +82,7 @@ def plot_price_trend(coin="bitcoin", days=7):
         margin=dict(l=40, r=40, t=60, b=40),
         height=450
     )
-
     return fig
-
 
 # -------- Streamlit UI --------
 st.set_page_config(page_title="Crypto LLM Assistant", layout="wide")
@@ -120,65 +91,57 @@ st.title("💹 Market Pulse - Crypto LLM Chat Assistant")
 st.write("Get real-time cryptocurrency updates and insights powered by LLM.")
 
 # Select coin
-coin = st.selectbox("Choose a cryptocurrency:", ["bitcoin", "ethereum", "dogecoin", "solana"])
+coin = st.selectbox("Choose a cryptocurrency:", list(COIN_SYMBOLS.keys()))
+symbol = COIN_SYMBOLS[coin]
 
 # Show live price
-price = fetch_crypto_price(coin)
-st.metric(label=f"Current Price of {coin.capitalize()}", value=f"${price}")
+price = fetch_binance_price(symbol)
+st.metric(label=f"Current Price of {coin.capitalize()}", value=f"${price:,.6f}")
 
 # --- Enhanced Price Change Widget ---
-price_data = fetch_crypto_price_change(coin)
+price_data = fetch_binance_price_change(symbol)
 current_price = price_data["price"]
 change = price_data["change"]
 percent_change = price_data["percent_change"]
 currency = "USD"
 timestamp = datetime.datetime.utcnow().strftime("%b %d, %H:%M UTC")
 
-# Styling logic
 color = "#ff4b4b" if change < 0 else "#4CAF50"
 arrow = "↓" if change < 0 else "↑"
 
-# HTML Widget
+price_display = f"{current_price:,.6f}" if isinstance(current_price, (int, float)) else "N/A"
 summary_html = f"""
 <div style="background-color:#111; padding: 25px; border-radius: 12px; color: white; width: 100%; font-family: 'Arial', sans-serif;">
     <div style="font-size: 16px; color: #ccc;">Market Summary &gt; <span style="font-weight: bold; color: white;">{coin.capitalize()}</span></div>
-    <div style="font-size: 36px; font-weight: bold; margin-top: 5px;">{current_price:,.2f} <span style="font-size: 20px;">{currency}</span></div>
+    <div style="font-size: 36px; font-weight: bold; margin-top: 5px;">{price_display} <span style="font-size: 20px;">{currency}</span></div>
     <div style="color: {color}; font-size: 16px; margin-top: 5px;">
-        {arrow} {abs(change):,.2f} ({percent_change:.2f}%) today
+        {arrow} {abs(change):,.6f} ({percent_change:.2f}%) today
     </div>
     <div style="font-size: 12px; color: #aaa; margin-top: 10px;">{timestamp}</div>
 </div>
 """
-col1, col2, col3 = st.columns([1, 2, 1])  # left, center, right
-
+col1, col2, col3 = st.columns([1, 2, 1])
 with col2:
     html(summary_html, height=160)
 
-# --- End of Enhanced Price Change Widget ---
-
-
-
-# Show news
-
+# --- News Section (keep using your existing fetch_crypto_news) ---
+news_list = fetch_crypto_news(coin)
 def display_news(news_list):
     st.markdown("📰 **Latest Crypto News**")
     if not news_list:
         st.write("No news articles available right now.")
         return
-
     for news in news_list:
         try:
             title = news.get("title", "No title")
             url = news.get("url", "#")
             source = news.get("source", {}).get("title", "Unknown source")
             published_at = news.get("published_at", "")
-            # Format the datetime string
             if published_at:
                 try:
-                    published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00")).strftime("%b %d, %Y %H:%M")
+                    published_at = datetime.datetime.fromisoformat(published_at.replace("Z", "+00:00")).strftime("%b %d, %Y %H:%M")
                 except Exception:
                     pass
-
             st.markdown(f"""
                 <div style='margin-bottom: 20px;'>
                     <a href="{url}" target="_blank" style='font-size: 18px; font-weight: bold; color: #1f77b4;'>{title}</a><br>
@@ -187,18 +150,13 @@ def display_news(news_list):
             """, unsafe_allow_html=True)
         except Exception as e:
             st.error(f"Error displaying an article: {e}")
-# Fetch and display news
-news_list = fetch_crypto_news(coin)
 display_news(news_list)
 
-# User prompt
+# --- LLM Q&A Section ---
 st.subheader("🤖 Ask a question about the market")
 user_prompt = st.text_area("Your Question", "Why is the price fluctuating today?")
 run = st.button("Generate Insight")
-
-# Response
 if run and user_prompt:
-    # Compose context
     news_context = "\n".join([item.get("title", "") + ": " + item.get("summary", "") for item in news_list])
     llm_input = f"""
 User question: {user_prompt}
@@ -213,9 +171,8 @@ Answer the user with a concise financial insight.
     output = response["choices"][0]["text"]
     st.success("LLM Insight")
     st.text(output)
-# Display summary of news
 
-# Select time range
+# --- Price Trend Section ---
 time_range_label = "Choose time range for trend:"
 time_range_options = {
     "7 Days": 7,
@@ -223,16 +180,13 @@ time_range_options = {
     "3 Months": 90,
     "6 Months": 180,
     "1 Year": 365,
-    "5 Years": 1825,
-    "Max": "max"
+    "Max": 1000
 }
 time_range_display = st.selectbox(time_range_label, list(time_range_options.keys()))
 selected_days = time_range_options[time_range_display]
 
-
-# Show price trend plot
 st.subheader(f"📊 {time_range_display} Price Trend")
-fig = plot_price_trend(coin, days=selected_days)
+fig = plot_price_trend_binance(symbol, days=selected_days)
 st.plotly_chart(fig, use_container_width=True)
 
 # Footer
