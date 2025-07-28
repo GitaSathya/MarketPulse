@@ -130,3 +130,23 @@ def plot_price_trend(price_df, crypto_id):
     plt.close()
     buf.seek(0)
     return buf
+
+def plot_moving_average(price_df, crypto_id, window=5):
+    df = price_df.copy()
+    df["SMA"] = df["price"].rolling(window=window).mean()
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(df['date'], df['price'], label=f'{crypto_id.capitalize()} Price', alpha=0.6)
+    plt.plot(df['date'], df['SMA'], label=f'{window}-Day SMA', linestyle='--', color='orange')
+    plt.xlabel("Date")
+    plt.ylabel("Price (USD)")
+    plt.title(f"{crypto_id.capitalize()} {window}-Day Moving Average")
+    plt.legend()
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    plt.close()
+    buf.seek(0)
+    return buf
+
